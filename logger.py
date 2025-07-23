@@ -1,49 +1,75 @@
 import serial
 from datetime import datetime
 
-ser = serial.Serial("COM7", 9600, timeout=1)  # Port ve baud
+#  Zaman damgalı dosyalar
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+filename = f"data_{timestamp}.txt"
+error_log = f"errors_{timestamp}.log"
+
+#  Dosya başlıkları
+with open(filename, 'w', encoding='utf-8') as f:
+    f.write("Zaman,AX_g,AY_g,AZ_g,GX_dps,GY_dps,GZ_dps,TempC,PacketID\n")
+
+#  Seri port başlat
+ser = serial.Serial("COM7", 9600, timeout=1)
 print(" Arduino'dan veri bekleniyor...")
 
-buffer = bytearray()  # byte'ları tutacak geçici alan
+paket = bytearray()
+MAX_PACKET_LENGTH = 100  # STX-ETX arası azami uzunluk
 
 while True:
     if ser.in_waiting:
         gelen = ser.read(ser.in_waiting)
-        buffer += gelen  # Gelen veriyi biriktir
+        paket += gelen
 
-        # STX ve ETX arası varsa paketi çıkar
-        while b'\x02' in buffer and b'\x03' in buffer:
-            start = buffer.find(b'\x02')
-            end = buffer.find(b'\x03', start)
+        # Buffer taşmasını önle
+        if len(paket) > 2048:
+            print(" Veri tamponu çok doldu, sıfırlanıyor.")
+            paket.clear()
 
-            if start != -1 and end != -1:
-                paket = buffer[start + 1:end]  # STX-ETX arası
+        while b'\x02' in paket and b'\x03' in paket:
+            start = paket.find(b'\x02')
+            end = paket.find(b'\x03', start)
+
+            if start != -1 and end != -1 and end > start:
+                icerik = paket[start + 1:end]
+                paket = paket[end + 1:]
+
+                # Aşırı uzun paket kontrolü
+                if len(icerik) > MAX_PACKET_LENGTH:
+                    print(" Çok uzun paket atlandı:", list(icerik))
+                    with open(error_log, 'a', encoding='utf-8') as f:
+                        f.write(f"{datetime.now()} - LONG PACKET: {list(icerik)}\n")
+                    continue
 
                 try:
-                    payload = paket.decode()
+                    # ASCII decode + split
+                    payload = icerik.decode('ascii')
                     parcalar = payload.split(',')
+
+                    # 9 parça beklenir: 8 veri + 1 checksum
+                    if len(parcalar) != 9:
+                        print(" Beklenmeyen parça sayısı:", parcalar)
+                        continue
+
                     veri_kismi = ','.join(parcalar[:-1])
                     gelen_checksum = int(parcalar[-1])
-
-                    # ASCII toplamı
                     hesaplanan_checksum = sum(ord(c) for c in veri_kismi) % 256
 
                     if gelen_checksum == hesaplanan_checksum:
-                        print(" Doğru veri:", veri_kismi)
                         zaman = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                        satir = f"{zaman},{veri_kismi}\n"
-                        with open("veri_logu.txt", "a", encoding="utf-8") as f:
-                            f.write(satir)
+                        with open(filename, 'a', encoding='utf-8') as f:
+                            f.write(f"{zaman},{veri_kismi}\n")
+                        print(f" [{zaman}] → {veri_kismi}")
                     else:
-                        print(" Hatalı paket - Checksum uyuşmuyor")
-                        print("Gelen:", gelen_checksum, "| Hesaplanan:", hesaplanan_checksum)
+                        print(f"Checksum hatalı → Gelen: {gelen_checksum}, Hesaplanan: {hesaplanan_checksum}")
+                        with open(error_log, 'a', encoding='utf-8') as f:
+                            f.write(f"{datetime.now()} - BAD CHECKSUM: {payload}\n")
 
                 except Exception as e:
-                    print(" Decode veya split hatası:", e)
-                    print("Ham veri:", paket)
-
-                # Bu paketi buffer'dan çıkar (temizle)
-                buffer = buffer[end + 1:]
+                    print(" Decode veya işlem hatası:", e)
+                    with open(error_log, 'a', encoding='utf-8') as f:
+                        f.write(f"{datetime.now()} - EXCEPTION: {str(e)} | Paket: {list(icerik)}\n")
 
             else:
                 break

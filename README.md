@@ -29,7 +29,7 @@ MPU6050 den alınan verileri Arduinodan Pythona gönderip Python timestampli .tx
 -MPU6050'dan 14 byte veri okunur 
 
 -Veriler 14 byte olarak okunur (ax,ay,az,gx,gy,gz,temp) 
-
+-Baud rate 9600 olarak belirlendi
 -G cinsine çevirmek için hesaplamalar yapılır ve string olarak pythona yollanır 
 ```cpp
 
